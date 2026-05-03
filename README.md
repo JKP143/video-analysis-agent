@@ -87,12 +87,15 @@ Optional — only for the `tools/` helper scripts. Copy `.env.example` to `.env`
 Per-branch detail views of the canvas:
 
 ![Video branch — Telegram file upload through Gemini Files API](docs/screenshots/video-branch.png)
+
 *Video branch: Telegram file → Gemini Files API resumable upload → poll loop until processing completes.*
 
 ![YouTube branch — Gemini accepts YouTube URLs directly](docs/screenshots/youtube-branch.png)
+
 *YouTube branch: bypasses upload entirely, hands Gemini the URL.*
 
 ![Analysis + publish — Gemini analyze and publish to Google Doc](docs/screenshots/analysis-publish.png)
+
 *Analysis + publish: Gemini 2.5 Pro returns structured JSON, Claude Sonnet 4.5 (via OpenRouter) formats it as markdown, then writes a new Google Doc and replies in Telegram with a clickable link.*
 
 ## See also
