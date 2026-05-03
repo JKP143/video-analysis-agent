@@ -2,7 +2,7 @@
 
 > Send a video file or paste a YouTube URL into a Telegram bot. Get back a structured Google Doc — summary, key moments, visual walkthrough, transcript — and a one-tap link to open it.
 
-![placeholder — drop a screenshot of a finished analysis in docs/screenshots/ and link it here](docs/screenshots/.gitkeep)
+![Video Analysis Agent — n8n workflow canvas](docs/screenshots/workflow-full.png)
 
 ## What it does
 
@@ -81,6 +81,19 @@ Optional — only for the `tools/` helper scripts. Copy `.env.example` to `.env`
 - `python tools/sync_workflow.py workflow/video-analysis-agent.n8n.json` — push edits to running n8n.
 - `python tools/list_executions.py --workflow <id>` — recent runs.
 - `python tools/fetch_execution.py <execution_id>` — drill into one run (great for debugging timeouts).
+
+## Screenshots
+
+Per-branch detail views of the canvas:
+
+![Video branch — Telegram file upload through Gemini Files API](docs/screenshots/video-branch.png)
+*Video branch: Telegram file → Gemini Files API resumable upload → poll loop until processing completes.*
+
+![YouTube branch — Gemini accepts YouTube URLs directly](docs/screenshots/youtube-branch.png)
+*YouTube branch: bypasses upload entirely, hands Gemini the URL.*
+
+![Analysis + publish — Gemini analyze and publish to Google Doc](docs/screenshots/analysis-publish.png)
+*Analysis + publish: Gemini 2.5 Pro returns structured JSON, Claude Sonnet 4.5 (via OpenRouter) formats it as markdown, then writes a new Google Doc and replies in Telegram with a clickable link.*
 
 ## See also
 
