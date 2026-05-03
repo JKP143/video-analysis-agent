@@ -1,0 +1,946 @@
+{
+  "name": "Video Analysis Agent",
+  "nodes": [
+    {
+      "id": "5169e04d-b206-4915-bf82-c751ee279aa5",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        400
+      ],
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "download": false
+        }
+      },
+      "webhookId": "fcc2fe97-6522-44a9-b4ee-cfb38dad3672"
+    },
+    {
+      "id": "cc2ec2e5-045e-4324-a0d3-2a65d8c0b7d1",
+      "name": "Parse Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "p1",
+              "name": "telegram_chat_id",
+              "type": "number",
+              "value": "={{ $json.message.chat.id }}"
+            },
+            {
+              "id": "p2",
+              "name": "telegram_message_id",
+              "type": "number",
+              "value": "={{ $json.message.message_id }}"
+            },
+            {
+              "id": "p3",
+              "name": "file_id",
+              "type": "string",
+              "value": "={{ $json.message.video?.file_id || $json.message.document?.file_id || \"\" }}"
+            },
+            {
+              "id": "p4",
+              "name": "mime_type",
+              "type": "string",
+              "value": "={{ $json.message.video?.mime_type || $json.message.document?.mime_type || \"video/mp4\" }}"
+            },
+            {
+              "id": "p5",
+              "name": "youtube_url",
+              "type": "string",
+              "value": "={{ (($json.message.text || $json.message.caption || \"\").match(/https?:\\/\\/(?:www\\.)?(?:youtube\\.com\\/watch\\?v=[\\w-]+|youtu\\.be\\/[\\w-]+)\\S*/) || [\"\"])[0] }}"
+            },
+            {
+              "id": "p6",
+              "name": "user_prompt",
+              "type": "string",
+              "value": "={{ $json.message.caption || $json.message.text || \"\" }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      }
+    },
+    {
+      "id": "b0ee0259-32eb-4648-b10b-34f82a4d0eb7",
+      "name": "Route By Input Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        600,
+        400
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "id": "v1",
+                    "leftValue": "={{ $json.file_id }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "video"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "id": "v2",
+                    "leftValue": "={{ $json.youtube_url }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "youtube"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "other",
+          "looseTypeValidation": true
+        }
+      }
+    },
+    {
+      "id": "3b239ced-e9e5-48bc-a2d9-a10891dbd3d0",
+      "name": "Telegram Get File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        820,
+        180
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "get",
+        "fileId": "={{ $json.file_id }}",
+        "download": true
+      },
+      "webhookId": "b91b8467-54eb-4bc8-aa57-fed775e927d3"
+    },
+    {
+      "id": "b1c2d3e4-f5a6-7890-1234-56789abcdef0",
+      "name": "Prepare Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const bin = $input.item.binary?.data;\nif (!bin) throw new Error('No binary data on item \u2014 Telegram Get File did not download');\n// n8n stores binary either inline (bin.data is base64) or on disk (filesystem-v2:\n// bin.data is the literal string \"filesystem-v2\" and the real bytes are on disk).\n// In filesystem mode, decoding bin.data as base64 gives 9 bogus bytes \u2014 always\n// prefer bin.bytes when it's a valid number.\nlet byteLength;\nif (typeof bin.bytes === 'number' && bin.bytes > 0) {\n  byteLength = bin.bytes;\n} else {\n  const b64 = bin.data || '';\n  byteLength = Buffer.byteLength(b64, 'base64');\n}\nif (!byteLength) throw new Error('Could not determine binary byte length \u2014 bin.bytes missing and bin.data not base64');\nreturn {\n  json: { ...$input.item.json, file_byte_length: byteLength, file_mime_type: bin.mimeType || 'video/mp4' },\n  binary: $input.item.binary\n};"
+      }
+    },
+    {
+      "id": "73c52327-f413-42f8-bda3-ec49d9f1a546",
+      "name": "Gemini Upload Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1260,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/upload/v1beta/files",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-Upload-Protocol",
+              "value": "resumable"
+            },
+            {
+              "name": "X-Goog-Upload-Command",
+              "value": "start"
+            },
+            {
+              "name": "X-Goog-Upload-Header-Content-Length",
+              "value": "={{ $json.file_byte_length }}"
+            },
+            {
+              "name": "X-Goog-Upload-Header-Content-Type",
+              "value": "={{ $json.file_mime_type }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file: { display_name: \"tg_\" + $('Parse Input').item.json.telegram_message_id } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "a9e8b7c6-d5f4-4321-9876-5432109abcde",
+      "name": "Attach Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1480,
+        180
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const gf = $('Telegram Get File').first();\nreturn { json: $input.item.json, binary: gf?.binary || {} };"
+      }
+    },
+    {
+      "id": "7d7aeaf8-adc6-45c8-8635-28420c612409",
+      "name": "Gemini Upload Bytes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1700,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.headers[\"x-goog-upload-url\"] }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-Upload-Offset",
+              "value": "0"
+            },
+            {
+              "name": "X-Goog-Upload-Command",
+              "value": "upload, finalize"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $('Prepare Upload').item.json.file_mime_type }}"
+            },
+            {
+              "name": "Content-Length",
+              "value": "={{ $('Prepare Upload').item.json.file_byte_length }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "b74d0283-0ad7-4d2f-928b-bc9c859b77e8",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        180
+      ],
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "webhookId": "e644abff-13e1-4573-816e-d1201e1e8536"
+    },
+    {
+      "id": "c8984d6c-7a10-4438-bdcb-45f7fd846a9f",
+      "name": "Gemini Poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2140,
+        180
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://generativelanguage.googleapis.com/v1beta/\" + $('Gemini Upload Bytes').item.json.file.name }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "ec995dea-8f17-4921-b90f-6381ce5268a0",
+      "name": "Still Processing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2360,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "not-active",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "ACTIVE",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "not-failed",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "FAILED",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          }
+        },
+        "options": {
+          "ignoreCase": false,
+          "looseTypeValidation": true
+        }
+      }
+    },
+    {
+      "id": "f254d15a-b56a-4ae6-a0f7-c645d67160b5",
+      "name": "Set File URI From Video",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3020,
+        280
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u1",
+              "name": "file_uri",
+              "type": "string",
+              "value": "={{ $json.uri }}"
+            },
+            {
+              "id": "u2",
+              "name": "gemini_mime_type",
+              "type": "string",
+              "value": "={{ $json.mimeType || \"video/mp4\" }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      }
+    },
+    {
+      "id": "8daf11e6-7fc5-4e94-8479-e3c572e1672f",
+      "name": "Set File URI From YouTube",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        820,
+        660
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "y1",
+              "name": "file_uri",
+              "type": "string",
+              "value": "={{ $json.youtube_url }}"
+            },
+            {
+              "id": "y2",
+              "name": "gemini_mime_type",
+              "type": "string",
+              "value": "video/*"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      }
+    },
+    {
+      "id": "2cf472db-8677-4dea-8b10-9e4367778c7b",
+      "name": "Telegram Reject",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        820,
+        820
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "Send a video file or a YouTube link to get an analysis.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "008e5adf-50a0-421c-a5fa-cbf14bc9cd1e"
+    },
+    {
+      "id": "9edbce81-b97c-4964-ab56-e98e5f7b0c75",
+      "name": "Gemini Generate Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3240,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [ { file_data: { mime_type: $json.gemini_mime_type, file_uri: $json.file_uri } }, { text: ($('Parse Input').item.json.user_prompt && $('Parse Input').item.json.user_prompt.length > 3) ? ($('Parse Input').item.json.user_prompt + \"\\n\\nReturn strict JSON with exactly two keys: transcript (string) and description (string).\\n\\nFor transcript: produce a complete chronological shot-by-shot script of the ENTIRE video from 0:00 to the very end. Include every element \u2014 visual actions, on-screen text, music and sound effect cues, narration, and all spoken dialogue \u2014 verbatim and in order. Put ONE event per line, each starting with a timestamp in [mm:ss] format, using these line types: '[mm:ss] ACTION: <what happens on screen>', '[mm:ss] TEXT ON SCREEN: <displayed text>', '[mm:ss] SFX: <notable sound or music>', and '[mm:ss] <Descriptive Speaker Label>: <exact line>' for dialogue. Infer speaker labels from context (examples: Ellen, Track Team Student 1, Drama Club Student, Fight Club Student, Friend, Thug 1-6, Customer, Narrator). Use role-based labels whenever possible; generic 'Speaker 1' only if context gives nothing. Separate lines with a literal \\\\n. Do NOT summarize, paraphrase, or skip anything. Even silent moments should be captured as ACTION lines.\\n\\nFor description: a compact prose visual walkthrough of 3-6 paragraphs \u2014 this is used for a narrative summary section and should NOT duplicate the transcript word-for-word.\") : \"Return strict JSON with exactly two keys: transcript (string) and description (string).\\n\\nFor transcript: produce a complete chronological shot-by-shot script of the ENTIRE video from 0:00 to the very end. Include every element \u2014 visual actions, on-screen text, music and sound effect cues, narration, and all spoken dialogue \u2014 verbatim and in order. Put ONE event per line, each starting with a timestamp in [mm:ss] format, using these line types: '[mm:ss] ACTION: <what happens on screen>', '[mm:ss] TEXT ON SCREEN: <displayed text>', '[mm:ss] SFX: <notable sound or music>', and '[mm:ss] <Descriptive Speaker Label>: <exact line>' for dialogue. Infer speaker labels from context (examples: Ellen, Track Team Student 1, Drama Club Student, Fight Club Student, Friend, Thug 1-6, Customer, Narrator). Use role-based labels whenever possible; generic 'Speaker 1' only if context gives nothing. Separate lines with a literal \\\\n. Do NOT summarize, paraphrase, or skip anything. Even silent moments should be captured as ACTION lines.\\n\\nFor description: a compact prose visual walkthrough of 3-6 paragraphs \u2014 this is used for a narrative summary section and should NOT duplicate the transcript word-for-word.\" } ] }], generationConfig: { response_mime_type: \"application/json\", temperature: 0.3, maxOutputTokens: 32768 } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 300000
+        }
+      }
+    },
+    {
+      "id": "f30ada6e-31e5-424f-8bf0-b80b83a670ac",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3460,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const raw = $input.item.json;\nconst text = raw?.candidates?.[0]?.content?.parts?.[0]?.text\n  ?? raw?.content?.parts?.[0]?.text\n  ?? '';\nconst finishReason = raw?.candidates?.[0]?.finishReason || 'UNKNOWN';\n\nfunction stripFences(s){ return s.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```\\s*$/,'').trim(); }\nfunction repair(s){ return s.replace(/,(\\s*[}\\]])/g,'$1').replace(/[\\u201C\\u201D]/g,'\"').replace(/[\\u2018\\u2019]/g,\"'\"); }\n\nlet parsed = null;\nlet mode = 'none';\nconst cleaned = stripFences(text);\n\ntry { parsed = JSON.parse(cleaned); mode = 'strict'; } catch (_) {}\nif (!parsed) { try { parsed = JSON.parse(repair(cleaned)); mode = 'repaired'; } catch (_) {} }\nif (!parsed) {\n  const firstBrace = cleaned.indexOf('{');\n  if (firstBrace >= 0) {\n    let depth = 0, inStr = false, esc = false, end = -1;\n    for (let i = firstBrace; i < cleaned.length; i++) {\n      const c = cleaned[i];\n      if (esc) { esc = false; continue; }\n      if (c === '\\\\' && inStr) { esc = true; continue; }\n      if (c === '\"') { inStr = !inStr; continue; }\n      if (inStr) continue;\n      if (c === '{') depth++;\n      else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }\n    }\n    if (end > 0) {\n      const slice = cleaned.slice(firstBrace, end + 1);\n      try { parsed = JSON.parse(slice); mode = 'recovered'; } catch (_) {}\n      if (!parsed) { try { parsed = JSON.parse(repair(slice)); mode = 'recovered+repaired'; } catch (_) {} }\n    }\n  }\n}\n\nif (!parsed) {\n  throw new Error('Could not parse Gemini analysis JSON. finishReason=' + finishReason + ' text starts with: ' + text.slice(0, 120));\n}\n\nreturn {\n  json: {\n    transcript: String(parsed.transcript || ''),\n    description: String(parsed.description || ''),\n    raw_text: text,\n    parse_mode: mode,\n    finish_reason: finishReason\n  }\n};"
+      }
+    },
+    {
+      "id": "18737de0-c7e0-465c-9ab3-be6a2f139693",
+      "name": "Narrative Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        3680,
+        400
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Video analysis input:\n\n## Transcript\n{{ $json.transcript || \"(no speech detected)\" }}\n\n## Visual description\n{{ $json.description }}",
+        "options": {
+          "systemMessage": "You are a video analyst writing a clean, structured markdown document about a video.\n\nGiven a transcript and a visual description, produce a markdown document with these sections (in order):\n# <a concise, descriptive title>\n\n## Summary\nA 2-3 sentence neutral overview of what happens.\n\n## Key moments\n3-6 bullet points of the most important moments or takeaways. Reference timestamps only if present in the input.\n\n## Visual walkthrough\nA scene-by-scene description.\n\nDo NOT include a Transcript section \u2014 the transcript is appended separately downstream, so writing it here would duplicate it. Stop after the Visual walkthrough.\n\nRules: Neutral, precise tone. No preamble, no meta-commentary. Output only the markdown document, nothing else.",
+          "maxIterations": 2
+        }
+      }
+    },
+    {
+      "id": "5ecf3327-efbd-4663-9bc7-8ef6088dd2bf",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        3680,
+        600
+      ],
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.5",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 16384
+        }
+      }
+    },
+    {
+      "id": "813a4c89-18ab-47b6-94c2-b65b1a5b40c8",
+      "name": "Create Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        3900,
+        400
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "document",
+        "operation": "create",
+        "title": "=Video Analysis \u2014 {{ $now.toFormat(\"yyyy-LL-dd HH:mm\") }} \u2014 msg {{ $('Parse Input').item.json.telegram_message_id }}",
+        "folderId": ""
+      }
+    },
+    {
+      "id": "c3d4e5f6-0a1b-2c3d-4e5f-678901abcdef",
+      "name": "Clean Markdown For Doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4120,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const createDoc = $input.item.json;\nconst md = String($('Narrative Agent').first()?.json?.output || '');\nconst rawTranscript = String($('Parse Analysis').first()?.json?.transcript || '').trim();\n\nfunction cleanMarkdown(src) {\n  const lines = src.split('\\n');\n  const out = [];\n  let prev = '';\n  for (let raw of lines) {\n    let line = raw;\n    let m;\n    if ((m = line.match(/^#\\s+(.+?)\\s*$/))) {\n      if (out.length && prev !== '') out.push('');\n      out.push(m[1].toUpperCase());\n      out.push('');\n      prev = '';\n      continue;\n    }\n    if ((m = line.match(/^(##|###)\\s+(.+?)\\s*$/))) {\n      if (out.length && prev !== '') out.push('');\n      out.push(m[2]);\n      prev = m[2];\n      continue;\n    }\n    line = line.replace(/^(\\s*)[-*+]\\s+/, '$1\\u2022 ');\n    line = line.replace(/\\*\\*(.+?)\\*\\*/g, '$1');\n    line = line.replace(/__([^_\\n]+)__/g, '$1');\n    line = line.replace(/(^|[^*])\\*([^*\\n]+)\\*(?!\\*)/g, '$1$2');\n    line = line.replace(/(^|[^_])_([^_\\n]+)_(?!_)/g, '$1$2');\n    line = line.replace(/`([^`]+)`/g, '$1');\n    line = line.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '$1 ($2)');\n    line = line.replace(/^\\s*>\\s?/, '');\n    line = line.replace(/^#+\\s*/, '');\n    out.push(line);\n    prev = line;\n  }\n  return out.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();\n}\n\nfunction formatTranscript(raw) {\n  if (!raw) return '';\n  let t = raw.replace(/\\*\\*(.+?)\\*\\*/g, '$1').replace(/__([^_\\n]+)__/g, '$1');\n  t = t.replace(/\\r\\n/g, '\\n');\n  const lines = t.split('\\n').map(l => l.trim()).filter(Boolean);\n  if (lines.length > 1) return lines.join('\\n\\n');\n  let single = lines[0] || '';\n  single = single.replace(/\\s+(?=\\[\\d{1,2}:\\d{2}\\])/g, '\\n\\n');\n  single = single.replace(/([.?!\"\\]\\)])\\s+(?=[A-Z][A-Za-z0-9 '()&.-]{0,40}:\\s)/g, '$1\\n\\n');\n  return single.replace(/\\n{3,}/g, '\\n\\n').trim();\n}\n\nconst narrative = cleanMarkdown(md);\nconst transcriptBlock = rawTranscript\n  ? '\\n\\nTranscript\\n' + formatTranscript(rawTranscript)\n  : '\\n\\nTranscript\\n(no speech detected)';\n\nreturn {\n  json: {\n    id: createDoc.id,\n    doc_name: createDoc.name,\n    clean_text: narrative + transcriptBlock + '\\n'\n  }\n};"
+      }
+    },
+    {
+      "id": "57bd0740-3439-43f4-b300-f18c55c3d6e4",
+      "name": "Write To Google Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        4340,
+        400
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "document",
+        "operation": "update",
+        "documentURL": "={{ $json.id }}",
+        "simple": true,
+        "actionsUi": {
+          "actionFields": [
+            {
+              "object": "text",
+              "action": "={{ \"insert\" }}",
+              "insertSegment": "body",
+              "locationChoice": "endOfSegmentLocation",
+              "text": "={{ $json.clean_text }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2481c70e-1645-4c69-afa2-2e1e7dcad199",
+      "name": "Build Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4560,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const safeGet = (name) => { try { return $(name).first()?.json; } catch (e) { return null; } };\nconst doc = safeGet('Create Google Doc') || {};\nconst analysis = safeGet('Parse Analysis') || {};\nconst narrative = safeGet('Narrative Agent') || {};\nconst parseIn = safeGet('Parse Input') || {};\n\nconst docUrl = doc.id ? ('https://docs.google.com/document/d/' + doc.id + '/edit') : '';\nconst markdown = String(narrative.output || '');\n\nlet title = 'Video Analysis';\nconst titleMatch = markdown.match(/^#\\s+(.+?)\\s*$/m);\nif (titleMatch) title = titleMatch[1].trim();\n\nlet summary = '';\nconst summaryMatch = markdown.match(/##\\s+Summary\\s*\\n+([\\s\\S]*?)(?=\\n##\\s|$)/i);\nif (summaryMatch) summary = summaryMatch[1].trim();\nif (!summary) summary = String(analysis.description || '').slice(0, 500);\n\nlet keyMoments = [];\nconst kmMatch = markdown.match(/##\\s+Key moments\\s*\\n+([\\s\\S]*?)(?=\\n##\\s|$)/i);\nif (kmMatch) {\n  keyMoments = kmMatch[1]\n    .split('\\n')\n    .map(l => l.replace(/^\\s*[-*+\\u2022]\\s*/, '').replace(/\\*\\*(.+?)\\*\\*/g, '$1').replace(/[_`]/g, '').trim())\n    .filter(Boolean)\n    .slice(0, 6);\n}\n\nconst transcript = String(analysis.transcript || '');\nconst transcriptLines = transcript.split('\\n').filter(l => l.trim()).length;\nconst actionLines = (transcript.match(/\\[\\d{1,2}:\\d{2}\\]\\s*ACTION:/gi) || []).length;\nconst dialogueLines = (transcript.match(/\\[\\d{1,2}:\\d{2}\\]\\s+(?!ACTION:|SFX:|TEXT ON SCREEN:|MUSIC:|NARRATION:)[A-Z][A-Za-z0-9 '()&.-]{0,40}:\\s/g) || []).length;\nconst lastTimestampMatch = transcript.match(/\\[(\\d{1,2}):(\\d{2})\\][^\\[]*$/);\nlet runtime = '';\nif (lastTimestampMatch) runtime = `${lastTimestampMatch[1]}:${lastTimestampMatch[2]}`;\n\nconst escapeMd = (s) => String(s).replace(/([_*`\\[\\]])/g, '\\\\$1');\nconst lines = [];\nlines.push('*' + escapeMd(title) + '*');\nlines.push('');\nlines.push(summary.slice(0, 700));\nif (keyMoments.length) {\n  lines.push('');\n  lines.push('*Key moments:*');\n  for (const m of keyMoments) lines.push('\\u2022 ' + m.slice(0, 220));\n}\n\nconst stats = [];\nif (runtime) stats.push(runtime + ' runtime');\nif (dialogueLines) stats.push(dialogueLines + ' dialogue line' + (dialogueLines === 1 ? '' : 's'));\nif (actionLines) stats.push(actionLines + ' action beat' + (actionLines === 1 ? '' : 's'));\nif (!dialogueLines && !actionLines && transcriptLines) stats.push(transcriptLines + ' transcript lines');\nif (stats.length) {\n  lines.push('');\n  lines.push('_' + stats.join(' \\u00b7 ') + '_');\n}\n\nlines.push('');\nif (docUrl) lines.push('Full write-up: [Open Google Doc](' + docUrl + ')');\n\nconst message_text = lines.join('\\n').slice(0, 3800);\nconst reply_markup = docUrl\n  ? { inline_keyboard: [[{ text: 'Open analysis', url: docUrl }]] }\n  : undefined;\n\nreturn [{ json: {\n  message_text,\n  reply_markup: reply_markup ? JSON.stringify(reply_markup) : '',\n  telegram_chat_id: parseIn.telegram_chat_id,\n  doc_url: docUrl\n} }];"
+      }
+    },
+    {
+      "id": "61ff34d6-d724-4a57-92ce-c4075f896c9e",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4780,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.message_text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown",
+          "appendAttribution": false,
+          "reply_markup": "={{ $json.reply_markup }}"
+        }
+      },
+      "executeOnce": true,
+      "webhookId": "a6ad325d-1b77-4bfd-983f-25a91a901e28"
+    },
+    {
+      "id": "f47b9c56-2e48-4d31-914a-1ca3a8109037",
+      "name": "Sticky - Video branch",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        780,
+        100
+      ],
+      "parameters": {
+        "content": "## Video branch\nTelegram file -> Gemini Files API resumable upload -> poll loop (Wait 10s -> Gemini Poll -> Still Processing?) -> merge with YouTube branch.\n\nLoops every 10s while Gemini reports state=PROCESSING. Anything else (ACTIVE or FAILED) exits the loop and proceeds. No timeout.",
+        "color": 4,
+        "width": 2340,
+        "height": 480
+      }
+    },
+    {
+      "id": "2ac4ae30-288d-4cfc-ba30-52d4c4f49230",
+      "name": "Sticky - YouTube branch",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        790,
+        610
+      ],
+      "parameters": {
+        "content": "## YouTube branch\nGemini accepts YouTube URLs directly as file_data, bypassing upload entirely. Safe for clips over Telegram's 20MB getFile cap.",
+        "color": 5,
+        "width": 270,
+        "height": 140
+      }
+    },
+    {
+      "id": "49c05624-dac5-4f4d-acb2-48d2b71abb31",
+      "name": "Sticky - Analysis and publish",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3210,
+        320
+      ],
+      "parameters": {
+        "content": "## Analysis + publish\nGemini 2.5 Pro returns strict JSON { transcript, description }. The narrative agent (OpenRouter, Claude Sonnet 4.5) expands it into a markdown document, which is written into a new Google Doc in the \"Video Analyses\" folder. The Telegram reply includes a clickable summary plus an inline keyboard button.",
+        "color": 6,
+        "width": 1820,
+        "height": 400
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input": {
+      "main": [
+        [
+          {
+            "node": "Route By Input Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route By Input Type": {
+      "main": [
+        [
+          {
+            "node": "Telegram Get File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set File URI From YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Get File": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upload": {
+      "main": [
+        [
+          {
+            "node": "Gemini Upload Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Upload Start": {
+      "main": [
+        [
+          {
+            "node": "Attach Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Binary": {
+      "main": [
+        [
+          {
+            "node": "Gemini Upload Bytes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Upload Bytes": {
+      "main": [
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Gemini Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Poll": {
+      "main": [
+        [
+          {
+            "node": "Still Processing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Processing?": {
+      "main": [
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set File URI From Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set File URI From Video": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set File URI From YouTube": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Generate Content": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "Narrative Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Narrative Agent": {
+      "main": [
+        [
+          {
+            "node": "Create Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Narrative Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Clean Markdown For Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Markdown For Doc": {
+      "main": [
+        [
+          {
+            "node": "Write To Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write To Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Build Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
